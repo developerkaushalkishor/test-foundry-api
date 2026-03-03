@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Azure AI Foundry API Tester (Next.js 15)
 
-## Getting Started
+A premium, glassmorphic web application built with **Next.js 15**, **Tailwind CSS**, and **Framer Motion** to help developers quickly test and validate their Azure AI Foundry model deployments.
 
-First, run the development server:
+## 🚀 Quick Start Guide
 
+### 1. Clone & Install
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <your-repo-url>
+cd test-foundry-api
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Configure Environment Variables
+Create a `.env.local` file in the root directory:
+```env
+AZURE_AI_FOUNDRY_ENDPOINT="https://your-resource-name.openai.azure.com/openai/v1/chat/completions"
+AZURE_AI_FOUNDRY_KEY="your-api-key"
+AZURE_AI_FOUNDRY_DEPLOYMENT_NAME="gpt-5.2-chat"
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Run Development Server
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) to start testing.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## ⚠️ The "Max Tokens" Trap (Crucial for Developers)
 
-To learn more about Next.js, take a look at the following resources:
+One of the most common mistakes when integrating newer Azure AI Foundry models (like **gpt-5.2-chat**) is following older documentation or the standard OpenAI API format for token limits.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### The Problem
+If you use `max_tokens` in your request body, you might receive a `400 Bad Request`:
+> `Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### The Solution
+For newer preview models, the API schema has changed. You **must** use `max_completion_tokens` or omit it entirely to use the default.
 
-## Deploy on Vercel
+**Correct implementation (Server Action):**
+```typescript
+const response = await fetch(endpoint, {
+  method: 'POST',
+  headers: { 'api-key': key, 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model: "gpt-5.2-chat",
+    messages: [...],
+    // Use this instead of max_tokens
+    max_completion_tokens: 800 
+  }),
+});
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## ✨ Features
+
+- **Next.js 15 + Turbopack**: Blazing fast development.
+- **Server Actions**: Securely handles API keys on the server side (no `NEXT_PUBLIC` exposure needed).
+- **Premium UI**: 
+  - Glassmorphism effects via Tailwind utilities.
+  - Smooth animations with **Framer Motion**.
+  - **Lucide React** icons for a polished look.
+- **UX Enhancements**:
+  - Send message with **Enter** (Shift+Enter for newline).
+  - Auto-clears input after successful send.
+  - Raw JSON response viewer for debugging.
+
+## 🛠 Tech Stack
+
+- **Framework**: Next.js 15
+- **Styling**: Tailwind CSS
+- **Animations**: Framer Motion
+- **Icons**: Lucide React
+- **Language**: TypeScript
+
+## 📄 License
+MIT
