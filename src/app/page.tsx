@@ -1,244 +1,517 @@
 "use client";
 
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useRef } from "react";
+import { motion } from "framer-motion";
 import {
   Send,
   Loader2,
-  Terminal,
   Cpu,
-  Layers,
-  ChevronRight,
-  ShieldCheck,
-  AlertCircle,
-  RefreshCw
+  User as UserIcon,
+  LogOut,
+  MessageSquare,
+  Plus,
+  Trash2,
+  Menu,
+  Pin,
+  PinOff,
+  Pencil,
+  Check,
 } from "lucide-react";
-import { callAzureFoundry, type AzureChatResponse } from "@/lib/azure-api";
+import { callAzureFoundry } from "@/lib/azure-api";
+import {
+  saveUserName,
+  getChatSessions,
+  getSessionMessages,
+  createNewSession,
+  saveMessageToSession,
+  renameSession,
+  togglePinSession,
+  clearAllSessions
+} from "@/lib/user-actions";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+// --- Typewriter Component ---
+const Typewriter = ({ text, onComplete }: { text: string; onComplete?: () => void }) => {
+  const [displayText, setDisplayText] = useState("");
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    if (currentIndex < text.length) {
+      const timeout = setTimeout(() => {
+        setDisplayText((prev) => prev + text[currentIndex]);
+        setCurrentIndex((prev) => prev + 1);
+      }, 10);
+      return () => clearTimeout(timeout);
+    } else if (onComplete) {
+      onComplete();
+    }
+  }, [currentIndex, text, onComplete]);
+
+  return (
+    <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-[#0d0d0d] prose-pre:border prose-pre:border-[#2f2f2f]">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayText}</ReactMarkdown>
+    </div>
+  );
+};
+
+// --- Main Page Component ---
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+  isNew?: boolean;
+}
+
+interface ChatSession {
+  _id: string;
+  title: string;
+  pinned: boolean;
+  createdAt: string;
+  messageCount: number;
+}
 
 export default function Home() {
+  const [userName, setUserName] = useState<string | null>(null);
+  const [tempName, setTempName] = useState("");
+  const [isOnboarding, setIsOnboarding] = useState(true);
+
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  const [messages, setMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
-  const [response, setResponse] = useState<AzureChatResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
 
-  const handleTest = async () => {
-    if (!prompt.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await callAzureFoundry(prompt);
-      setResponse(data);
-      setPrompt(""); // Clear input after success
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || "An unexpected error occurred");
-    } finally {
-      setLoading(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isTyping]);
+
+  useEffect(() => {
+    const initApp = async () => {
+      const savedName = localStorage.getItem("chat_user_name");
+      if (savedName) {
+        setUserName(savedName);
+        setIsOnboarding(false);
+        await loadSessions(savedName);
+      }
+    };
+    initApp();
+  }, []);
+
+  const loadSessions = async (name: string, selectFirst: boolean = true) => {
+    const res = await getChatSessions(name);
+    if (res.success && res.sessions) {
+      setSessions(res.sessions);
+      if (selectFirst && res.sessions.length > 0) {
+        await handleSelectSession(name, res.sessions[0]._id);
+      } else if (res.sessions.length === 0) {
+        await handleNewChat(name);
+      }
     }
   };
 
-  return (
-    <main className="min-h-screen bg-[#040911] text-white p-4 md:p-8 selection:bg-azure-500/30">
-      {/* Background elements */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-azure-900/20 blur-[120px] rounded-full animate-pulse-slow" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-azure-600/10 blur-[120px] rounded-full animate-pulse-slow" />
-      </div>
+  const handleSelectSession = async (name: string, sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setMessages([]);
+    setIsSidebarOpen(false);
+    const res = await getSessionMessages(name, sessionId);
+    if (res.success && res.messages) {
+      setMessages(res.messages.map((m: any) => ({ role: m.role, content: m.content })));
+    }
+  };
 
-      <div className="max-w-4xl mx-auto relative z-10">
-        {/* Header */}
-        <header className="mb-12">
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-2 mb-2"
-          >
-            <div className="p-2 bg-azure-500/10 rounded-lg border border-azure-500/20">
-              <Cpu className="w-5 h-5 text-azure-400" />
-            </div>
-            <span className="text-azure-400 font-medium tracking-wider text-xs uppercase">Azure AI Foundry</span>
-          </motion.div>
-          <motion.h1
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.1 }}
-            className="text-4xl md:text-5xl font-bold tracking-tight mb-4"
-          >
-            API Connectivity <span className="text-transparent bg-clip-text bg-gradient-to-r from-azure-400 to-azure-600">Tester</span>
-          </motion.h1>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="text-slate-400 text-lg max-w-2xl"
-          >
-            A premium exploration environment to validate your Azure AI Foundry deployment within a Next.js ecosystem.
-          </motion.p>
-        </header>
+  const handleNewChat = async (name: string | null = userName) => {
+    if (!name) return;
+    setLoading(true);
+    const res = await createNewSession(name);
+    if (res.success && res.sessionId) {
+      setActiveSessionId(res.sessionId);
+      setMessages([]);
+      await loadSessions(name, false);
+    }
+    setIsSidebarOpen(false);
+    setLoading(false);
+  };
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Column: Input */}
-          <div className="lg:col-span-12">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.3 }}
-              className="glass p-6 rounded-2xl border border-white/5"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
-                  <Terminal className="w-4 h-4 text-azure-400" />
-                  <span>Request Payload</span>
-                </div>
-                <div className="flex items-center gap-4 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
-                  <span>Next.js 15</span>
-                  <span>TypeScript</span>
-                </div>
-              </div>
+  const handleNameSubmit = async () => {
+    if (!tempName.trim()) return;
+    setLoading(true);
+    const result = await saveUserName(tempName);
+    if (result.success) {
+      localStorage.setItem("chat_user_name", tempName);
+      setUserName(tempName);
+      setIsOnboarding(false);
+      await loadSessions(tempName);
+    }
+    setLoading(false);
+  };
 
-              <div className="relative mb-4">
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleTest();
-                    }
-                  }}
-                  placeholder="Ask something to your Azure AI Model..."
-                  className="w-full h-32 bg-black/40 border border-white/10 rounded-xl p-4 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-azure-500/40 focus:border-azure-500/40 transition-all resize-none font-mono text-sm shadow-inner"
-                />
-              </div>
+  const handleLogout = () => {
+    localStorage.removeItem("chat_user_name");
+    setUserName(null);
+    setIsOnboarding(true);
+    setMessages([]);
+    setSessions([]);
+    setActiveSessionId(null);
+  };
 
-              <div className="flex items-center justify-between">
-                <div className="flex gap-4">
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    Secure
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                    <Layers className="w-3.5 h-3.5" />
-                    Direct API
-                  </div>
-                </div>
+  const handleClearAllChats = async () => {
+    if (!userName) return;
+    setMessages([]);
+    setSessions([]);
+    setActiveSessionId(null);
+    await clearAllSessions(userName);
+    await handleNewChat(userName);
+  };
 
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleTest}
-                  disabled={loading || !prompt.trim()}
-                  className={`
-                    flex items-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm transition-all
-                    ${loading || !prompt.trim()
-                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5'
-                      : 'bg-gradient-to-r from-azure-600 to-azure-500 text-white shadow-lg shadow-azure-900/40 hover:shadow-azure-500/20 active:from-azure-700 active:to-azure-600 border border-azure-400/20'}
-                  `}
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Testing...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Execute Test
-                    </>
-                  )}
-                </motion.button>
-              </div>
-            </motion.div>
+  const handleRenameStart = (session: ChatSession) => {
+    setEditingSessionId(session._id);
+    setEditTitle(session.title);
+  };
+
+  const handleRenameSave = async (sessionId: string) => {
+    if (!userName || !editTitle.trim()) return;
+    const res = await renameSession(userName, sessionId, editTitle.trim());
+    if (res.success) {
+      setSessions(prev => prev.map(s => s._id === sessionId ? { ...s, title: res.title as string } : s));
+    }
+    setEditingSessionId(null);
+  };
+
+  const handleTogglePin = async (sessionId: string) => {
+    if (!userName) return;
+    const res = await togglePinSession(userName, sessionId);
+    if (res.success) {
+      setSessions(prev => {
+        const updated = prev.map(s => s._id === sessionId ? { ...s, pinned: res.pinned as boolean } : s);
+        // Re-sort: pinned first, then by date
+        return updated.sort((a, b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+      });
+    }
+  };
+
+  const handleTest = async () => {
+    if (!prompt.trim() || loading || isTyping || !userName || !activeSessionId) return;
+
+    const userPrompt = prompt.trim();
+    setPrompt("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
+    const isFirstMessage = messages.length === 0;
+
+    // 1. Update UI and DB for user message
+    const updatedMessages = [...messages, { role: "user" as const, content: userPrompt }];
+    setMessages(updatedMessages);
+
+    // Non-blocking save to DB for speed
+    const dbSaveRes = await saveMessageToSession(userName, activeSessionId, "user", userPrompt, isFirstMessage);
+    if (dbSaveRes.success && dbSaveRes.titleUpdated && dbSaveRes.title) {
+      // Update sidebar title dynamically with AI-generated title
+      setSessions(prev => prev.map(s => s._id === activeSessionId ? { ...s, title: dbSaveRes.title as string } : s));
+    }
+
+    setLoading(true);
+
+    try {
+      // Send past context to Azure (up to last 6 messages to save tokens)
+      const contextMessages = updatedMessages.slice(-6).map(m => ({ role: m.role, content: m.content }));
+
+      const data = await callAzureFoundry(contextMessages);
+      const assistantContent = data.choices?.[0]?.message?.content || "No response received.";
+
+      setLoading(false);
+      setIsTyping(true);
+
+      setMessages(prev => [...prev, { role: "assistant", content: assistantContent, isNew: true }]);
+      await saveMessageToSession(userName, activeSessionId, "assistant", assistantContent, false);
+
+    } catch (err: any) {
+      console.error(err);
+      setLoading(false);
+      setMessages(prev => [...prev, { role: "assistant", content: `**Error:** ${err.message || "Connection failed"}`, isNew: true }]);
+    }
+  };
+
+  const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const target = e.target;
+    target.style.height = 'auto';
+    target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
+  };
+
+  if (isOnboarding) {
+    return (
+      <main className="min-h-screen bg-[#212121] text-[#ececec] flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-[#2f2f2f] p-10 rounded-2xl max-w-md w-full text-center shadow-xl"
+        >
+          <div className="p-4 bg-white/5 rounded-full w-fit mx-auto mb-6">
+            <Cpu className="w-10 h-10 text-white" />
           </div>
+          <h2 className="text-2xl font-semibold mb-2">Finance Foundry</h2>
+          <p className="text-[#b4b4b4] mb-8 text-sm">Enter your name to access your AI Financial Advisor</p>
 
-          {/* Response Area */}
-          <div className="lg:col-span-12">
-            <AnimatePresence mode="wait">
-              {error && (
-                <motion.div
-                  key="error"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl flex items-start gap-3 mb-6"
-                >
-                  <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-                  <div>
-                    <h3 className="text-red-500 font-semibold text-sm">Deployment Connection Failure</h3>
-                    <p className="text-red-400/80 text-xs mt-1 leading-relaxed">
-                      {error}
-                    </p>
-                    <button
-                      onClick={handleTest}
-                      className="mt-3 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-white hover:text-red-200 transition-colors"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      Retry Connection
+          <input
+            type="text"
+            value={tempName}
+            onChange={(e) => setTempName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleNameSubmit()}
+            placeholder="John Doe"
+            className="w-full bg-[#212121] border border-[#424242] rounded-lg p-3 text-center text-white mb-6 focus:ring-1 focus:ring-white outline-none transition-all placeholder:text-[#6b6b6b]"
+          />
+
+          <button
+            onClick={handleNameSubmit}
+            disabled={loading || !tempName.trim()}
+            className="w-full bg-white text-black py-3 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Start Secure Session"}
+          </button>
+        </motion.div>
+      </main>
+    );
+  }
+
+  return (
+    <div className="flex h-screen bg-[#212121] text-[#ececec] overflow-hidden font-sans">
+
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <div className={`
+        fixed md:static inset-y-0 left-0 z-50 w-[260px] bg-[#171717] flex flex-col transition-transform duration-300 ease-in-out
+        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <div className="p-3">
+          <button
+            onClick={() => handleNewChat(userName)}
+            className="flex items-center gap-2 w-full p-3 rounded-lg hover:bg-[#212121] transition-colors text-sm font-medium text-white"
+          >
+            <div className="flex items-center justify-center w-7 h-7 rounded-full bg-white/10">
+              <Plus className="w-4 h-4" />
+            </div>
+            New Financial Chat
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-3 py-2">
+          <div className="text-xs text-[#6b6b6b] font-semibold px-2 mb-3 mt-2">Previous Sessions</div>
+          {sessions.map((session) => (
+            <div
+              key={session._id}
+              className={`group flex items-center gap-1 w-full rounded-lg text-sm transition-colors mb-1
+                ${activeSessionId === session._id ? 'bg-[#2f2f2f] text-white' : 'hover:bg-[#212121] text-[#ececec]'}
+              `}
+            >
+              {editingSessionId === session._id ? (
+                <div className="flex items-center gap-1 w-full p-1.5 pl-2.5">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleRenameSave(session._id);
+                      if (e.key === 'Escape') setEditingSessionId(null);
+                    }}
+                    autoFocus
+                    className="flex-1 bg-[#171717] border border-[#424242] rounded px-2 py-1 text-sm text-white outline-none focus:border-white/40"
+                  />
+                  <button onClick={() => handleRenameSave(session._id)} className="p-1 hover:bg-white/10 rounded">
+                    <Check className="w-3.5 h-3.5 text-green-400" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => handleSelectSession(userName!, session._id)}
+                    className="flex items-center gap-3 flex-1 p-2.5 text-left truncate min-w-0"
+                  >
+                    {session.pinned ? (
+                      <Pin className="w-3.5 h-3.5 shrink-0 text-yellow-400 rotate-45" />
+                    ) : (
+                      <MessageSquare className="w-4 h-4 shrink-0" />
+                    )}
+                    <span className="truncate flex-1">{session.title}</span>
+                  </button>
+                  <div className="hidden group-hover:flex items-center shrink-0 pr-1">
+                    <button onClick={() => handleRenameStart(session)} className="p-1 hover:bg-white/10 rounded" title="Rename">
+                      <Pencil className="w-3.5 h-3.5 text-[#b4b4b4]" />
+                    </button>
+                    <button onClick={() => handleTogglePin(session._id)} className="p-1 hover:bg-white/10 rounded" title={session.pinned ? 'Unpin' : 'Pin'}>
+                      {session.pinned ? <PinOff className="w-3.5 h-3.5 text-yellow-400" /> : <Pin className="w-3.5 h-3.5 text-[#b4b4b4]" />}
                     </button>
                   </div>
-                </motion.div>
+                </>
               )}
+            </div>
+          ))}
+          {sessions.length === 0 && (
+            <p className="text-xs text-[#6b6b6b] px-2 italic">No previous sessions</p>
+          )}
+        </div>
 
-              {response ? (
-                <motion.div
-                  key="response"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="glass rounded-2xl border border-white/5 overflow-hidden"
-                >
-                  <div className="bg-white/5 px-6 py-4 flex items-center justify-between border-b border-white/5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                      <span className="text-sm font-semibold tracking-wide">Output Received</span>
+        <div className="p-3 border-t border-white/10">
+          <button
+            onClick={handleClearAllChats}
+            className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-[#212121] text-sm text-red-400 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear all sessions
+          </button>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 w-full p-3 mt-1 rounded-lg hover:bg-[#212121] text-sm transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Log out ({userName})
+          </button>
+        </div>
+      </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col relative w-full">
+        {/* Mobile Header */}
+        <div className="flex items-center justify-between p-3 border-b border-white/10 md:hidden bg-[#212121] z-10 sticky top-0">
+          <button onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-[#ececec]">
+            <Menu className="w-6 h-6" />
+          </button>
+          <span className="font-medium text-sm">Finance Assistant</span>
+          <div className="w-6" />
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto w-full scroll-smooth">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full px-4 text-center">
+              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mb-6 shadow-lg shadow-white/5">
+                <Cpu className="w-8 h-8 text-[#212121]" />
+              </div>
+              <h1 className="text-3xl font-semibold mb-2">Finance Advisor AI</h1>
+              <p className="text-[#b4b4b4] max-w-md mt-2">
+                Ask me about wealth management, stock markets, accounting, or economic trends.
+              </p>
+            </div>
+          ) : (
+            <div className="pb-32 pt-8">
+              {messages.map((msg, idx) => (
+                <div key={idx} className={`w-full flex justify-center py-4 px-4`}>
+                  <div className={`w-full max-w-3xl flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+
+                    {msg.role === 'assistant' && (
+                      <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shrink-0 mt-1 shadow-sm">
+                        <Cpu className="w-5 h-5 text-[#212121]" />
+                      </div>
+                    )}
+
+                    <div className={`
+                      relative group
+                      ${msg.role === 'user'
+                        ? 'bg-[#2f2f2f] px-5 py-3 rounded-3xl max-w-[80%]'
+                        : 'w-full max-w-[calc(100%-3rem)]'
+                      }
+                    `}>
+                      {msg.role === 'assistant' ? (
+                        <div className="text-[#ececec] pt-1">
+                          {msg.isNew ? (
+                            <Typewriter text={msg.content} onComplete={() => setIsTyping(false)} />
+                          ) : (
+                            <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-[#0d0d0d] prose-pre:border prose-pre:border-[#2f2f2f]">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                      )}
                     </div>
-                    <span className="text-[10px] text-slate-500 font-mono">Payload: {JSON.stringify(response).length} bytes</span>
                   </div>
-                  <div className="p-6">
-                    <p className="text-slate-300 leading-relaxed font-serif text-lg whitespace-pre-wrap">
-                      {response.choices?.[0]?.message?.content || "No content returned from the API."}
-                    </p>
+                </div>
+              ))}
+
+              {loading && (
+                <div className="w-full flex justify-center py-6 px-4">
+                  <div className="w-full max-w-3xl flex gap-4 justify-start">
+                    <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shrink-0 shadow-sm">
+                      <Cpu className="w-5 h-5 text-[#212121]" />
+                    </div>
+                    <div className="flex items-center mt-2">
+                      <div className="flex space-x-1">
+                        <div className="w-2 h-2 bg-[#ececec] rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                        <div className="w-2 h-2 bg-[#ececec] rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                        <div className="w-2 h-2 bg-[#ececec] rounded-full animate-bounce"></div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="bg-black/20 p-4 border-t border-white/5">
-                    <details className="cursor-pointer group">
-                      <summary className="text-[10px] font-bold uppercase tracking-widest text-azure-400 group-hover:text-azure-300 transition-colors flex items-center gap-1 list-none">
-                        <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
-                        View Raw JSON Response
-                      </summary>
-                      <pre className="mt-4 p-4 bg-black/40 rounded-xl overflow-x-auto text-[11px] font-mono text-azure-300/80 border border-azure-900/20">
-                        {JSON.stringify(response, null, 2)}
-                      </pre>
-                    </details>
-                  </div>
-                </motion.div>
-              ) : !loading && !error && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 0.5 }}
-                  className="border-2 border-dashed border-white/5 rounded-2xl p-20 flex flex-col items-center justify-center text-center"
-                >
-                  <div className="mb-4 p-4 rounded-full bg-white/5 border border-white/5">
-                    <Send className="w-8 h-8 text-slate-600" />
-                  </div>
-                  <h3 className="text-slate-500 font-medium mb-1">Awaiting Test Execution</h3>
-                  <p className="text-slate-600 text-sm max-w-[250px]">
-                    Configure your endpoint in .env.local and run a test to see results here.
-                  </p>
-                </motion.div>
+                </div>
               )}
-            </AnimatePresence>
+              <div ref={messagesEndRef} className="h-4" />
+            </div>
+          )}
+        </div>
+
+        {/* Input Area */}
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[#212121] via-[#212121] to-transparent pt-6 pb-6 px-4">
+          <div className="max-w-3xl mx-auto relative">
+            <div className="bg-[#2f2f2f] rounded-2xl flex items-end p-2 pb-2 pl-4 border border-[#424242] focus-within:border-[#565656] shadow-md transition-colors">
+              <textarea
+                ref={textareaRef}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onInput={handleTextareaInput}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleTest();
+                  }
+                }}
+                placeholder="Ask about stocks, budgets, or finance..."
+                className="w-full max-h-[200px] bg-transparent border-none py-2.5 pr-3 text-[#ececec] placeholder:text-[#b4b4b4] focus:ring-0 outline-none resize-none font-sans"
+                rows={1}
+              />
+              <button
+                onClick={handleTest}
+                disabled={loading || !prompt.trim() || isTyping}
+                className={`
+                  p-2 mb-1 mr-1 rounded-xl transition-all shrink-0
+                  ${loading || !prompt.trim() || isTyping
+                    ? 'bg-[#171717] text-[#6b6b6b] cursor-not-allowed'
+                    : 'bg-white text-black hover:bg-gray-200'}
+                `}
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-center text-[10px] text-[#b4b4b4] mt-3">
+              This AI is tuned for finance. Always verify critical financial decisions.
+            </p>
           </div>
         </div>
 
-        {/* Footer info */}
-        <footer className="mt-16 pt-8 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-4 text-slate-600 text-[11px] uppercase tracking-[0.2em] font-medium">
-          <div>Next.js Infrastructure Tester</div>
-          <div className="flex gap-6">
-            <span className="hover:text-azure-400 cursor-pointer transition-colors">Documentation</span>
-            <span className="hover:text-azure-400 cursor-pointer transition-colors">Privacy</span>
-            <span className="hover:text-azure-400 cursor-pointer transition-colors">Status</span>
-          </div>
-        </footer>
       </div>
-    </main>
+    </div>
   );
 }
