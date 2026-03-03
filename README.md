@@ -6,7 +6,7 @@ A premium, glassmorphic web application built with **Next.js 15**, **Tailwind CS
 
 ### 1. Clone & Install
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/developerkaushalkishor/test-foundry-api.git 
 cd test-foundry-api
 npm install
 ```
